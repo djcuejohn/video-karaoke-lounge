@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+  <title>DJCUEJOHN KaraokeHub</title>
+  <meta name="description" content="DJCUEJOHN KaraokeHub — real-time karaoke queue for parties." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Animated purple neon background (see bg.js) -->
+  <canvas id="neon-bg" aria-hidden="true"></canvas>
+
+  <!-- ===================== LANDING SCREEN ===================== -->
+  <section id="screen-landing" class="screen screen--active">
+    <div class="spotlight" aria-hidden="true"></div>
+
+    <header class="brand">
+      <span class="brand__mic" aria-hidden="true">🎤</span>
+      <h1 class="brand__title">
+        <span class="brand__pre">DJCUEJOHN</span>
+        <span class="brand__main">VIDEOKARAOKE-<span class="accent">LOUNGE</span></span>
+      </h1>
+      <p class="brand__tagline">Unleash your voice. Queue it up, take the stage.</p>
+    </header>
+
+    <div class="card-row">
+      <div class="panel">
+        <h2 class="panel__title">▶ Host a Room</h2>
+        <p class="panel__desc">Start a session on this screen and invite friends to sing.</p>
+        <label class="field">
+          <span class="field__label">Input a hostname:</span>
+          <input id="host-name" type="text" placeholder="e.g. John" maxlength="24" />
+        </label>
+        <button id="btn-host" class="btn btn--primary">Start Party</button>
+        <p id="host-error" class="field__error" hidden></p>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel__title">👥 Join the Stage</h2>
+        <p class="panel__desc">Enter a room code to start queuing songs.</p>
+        <label class="field">
+          <span class="field__label">Enter Your Host Name:</span>
+          <input id="join-name" type="text" placeholder="e.g. Levai" maxlength="24" />
+        </label>
+        <label class="field">
+          <span class="field__label">Copy and Paste your Room Code here:</span>
+          <input id="join-code" type="text" placeholder="e.g. MACHU" maxlength="6" />
+        </label>
+        <button id="btn-join" class="btn btn--secondary">Join Room</button>
+        <p id="join-error" class="field__error" hidden></p>
+      </div>
+    </div>
+
+    <p class="setup-hint">
+      🎤 VideoKaraoke-Lounge © 2026 DJCUEJOHN — Sing it loud, keep it proud!
+    </p>
+  </section>
+
+  <!-- ===================== HOST SCREEN ===================== -->
+  <section id="screen-host" class="screen">
+    <header class="room-header">
+      <div>
+        <p class="room-header__label">Room Code</p>
+        <div class="ticket" id="host-room-code">------</div>
+      </div>
+      <div class="room-header__meta">
+        <p class="room-header__label">Hosted by:</p>
+        <p id="host-display-name" class="room-header__value">—</p>
+      </div>
+      <button id="btn-host-leave" class="btn btn--ghost">End Party</button>
+    </header>
+
+    <main class="stage-layout">
+      <div class="player-column">
+        <div class="size-controls" id="size-controls">
+          <button class="size-btn is-active" data-mode="default">Default</button>
+          <button class="size-btn" data-mode="theater">Theater</button>
+          <button class="size-btn" data-mode="full">Full</button>
+        </div>
+        <div class="player-wrap" id="player-wrap">
+          <div id="player" class="player"></div>
+          <button id="btn-exit-full" class="exit-full-btn" hidden>✕ Exit Full</button>
+        </div>
+        <div class="now-playing" id="now-playing-empty">
+          <p>🎤 Silence in the spotlight… add your song to start the show!</p>
+        </div>
+        <div class="now-playing" id="now-playing-info" hidden>
+          <p class="now-playing__title" id="np-title">—</p>
+          <p class="now-playing__singer">Requested by: <span id="np-singer">—</span></p>
+        </div>
+        <div id="player-controls" class="player-controls" hidden>
+          <button id="btn-prev" class="ctrl-btn" aria-label="Previous">⏮</button>
+          <button id="btn-playpause" class="ctrl-btn ctrl-btn--primary" aria-label="Play">▶</button>
+          <button id="btn-next" class="ctrl-btn" aria-label="Next">⏭</button>
+          <button id="btn-mute" class="ctrl-btn" aria-label="Mute">🔊</button>
+          <input id="volume-slider" class="volume-slider" type="range" min="0" max="100" value="100" aria-label="Volume" />
+        </div>
+      </div>
+
+      <aside class="queue-column">
+        <h3 class="queue-title">Up Next (<span id="queue-count">0</span>)</h3>
+        <ul id="queue-list" class="queue-list">
+          <li class="queue-empty">Queue is empty. Share the room code to get singers queuing songs.</li>
+        </ul>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ===================== SINGER SCREEN ===================== -->
+  <section id="screen-singer" class="screen">
+    <header class="room-header">
+      <div>
+        <p class="room-header__label">Room Code</p>
+        <div class="ticket ticket--sm" id="singer-room-code">------</div>
+      </div>
+      <div class="room-header__meta">
+        <p class="room-header__label">Singing as</p>
+        <p id="singer-display-name" class="room-header__value">—</p>
+      </div>
+      <button id="btn-singer-leave" class="btn btn--ghost">Leave</button>
+    </header>
+
+    <main class="singer-layout">
+      <div class="search-column">
+        <label class="field">
+          <span class="field__label">Search for a song</span>
+          <div class="search-row">
+            <input id="search-input" type="text" placeholder="Song title or artist…" />
+            <button id="btn-search" class="btn btn--primary">Search</button>
+          </div>
+        </label>
+        <p id="search-status" class="field__error" hidden></p>
+        <ul id="search-results" class="result-list"></ul>
+      </div>
+
+      <aside class="queue-column">
+        <h3 class="queue-title">Queue (<span id="singer-queue-count">0</span>)</h3>
+        <div class="now-playing now-playing--compact" id="singer-now-playing">
+          <p class="now-playing__eyebrow">Now Playing</p>
+          <p class="now-playing__title" id="singer-np-title">Nothing yet</p>
+        </div>
+        <ul id="singer-queue-list" class="queue-list">
+          <li class="queue-empty">Queue is empty. Search above to add the first song.</li>
+        </ul>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ===================== WELCOME / DONATE POP-UP (see popup.js) ===================== -->
+  <div id="welcome-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="welcome-title" hidden>
+    <div class="modal__card">
+      <button id="welcome-close" class="modal__x" aria-label="Close">✕</button>
+
+      <div class="modal__scroll">
+        <header class="modal__hero">
+          <span class="modal__icon" aria-hidden="true">🎤</span>
+          <h2 id="welcome-title" class="modal__title">Welcome to <span class="accent" id="welcome-app-name"></span></h2>
+          <p id="welcome-tagline" class="modal__tagline"></p>
+        </header>
+
+        <section class="modal__section modal__dev">
+          <span class="modal__dev-icon" aria-hidden="true">🎧</span>
+          <div>
+            <p class="modal__label">Developed by</p>
+            <p id="welcome-dev-name" class="modal__dev-name"></p>
+          </div>
+        </section>
+
+        <section class="modal__section">
+          <p class="modal__label">Features</p>
+          <ul id="welcome-features" class="feature-list"></ul>
+        </section>
+
+        <section id="welcome-donate" class="modal__section">
+          <p class="modal__label">Support the developer <span class="modal__optional">(optional)</span></p>
+          <p id="welcome-donate-msg" class="modal__text"></p>
+          <div class="donate-card">
+            <span class="donate-card__icon" aria-hidden="true">💙</span>
+            <div class="donate-card__body">
+              <p id="welcome-donate-method" class="modal__label">GCASH</p>
+              <p id="welcome-donate-number" class="donate-card__number">09081071010</p>
+            </div>
+            <button id="welcome-copy" class="donate-card__copy" type="button">Copy</button>
+          </div>
+        </section>
+
+        <section class="modal__section modal__thanks">
+          <p class="modal__thanks-title">Thank you for using VideoKaraoke-Lounge!</p>
+          <p class="modal__text">Enjoy singing! 🎵</p>
+        </section>
+      </div>
+
+      <footer class="modal__footer">
+        <button id="welcome-continue" class="btn btn--primary" type="button">Continue</button>
+        <label class="modal__check">
+          <input id="welcome-dont-show" type="checkbox" />
+          <span>Don't show this again</span>
+        </label>
+      </footer>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- Firebase (compat SDK — no build step required) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+  <!-- Your keys live here -->
+  <script src="config.js"></script>
+
+  <!-- YouTube IFrame Player API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+
+  <script src="app.js"></script>
+
+  <!-- Animated neon background -->
+  <script src="bg.js"></script>
+
+  <!-- Welcome + optional donation pop-up -->
+  <script src="popup.js"></script>
+</body>
+</html>
