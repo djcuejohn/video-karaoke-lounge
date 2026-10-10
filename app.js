@@ -19,6 +19,9 @@
   let currentUserName = null;
   let pendingAutoplayVideoId = null;
   let currentLoadedVideoId = null;
+  let playerReady = false;     // true once the YT player fired onReady
+  let pendingLoadId = null;    // song requested while the player was still booting
+  let advancing = false;       // guards against double-advancing the queue
 
   // ---------------- Boot ----------------
   document.addEventListener("DOMContentLoaded", init);
@@ -49,6 +52,10 @@
     });
     setupVolumeControls();
     setupSizeControls();
+
+    // If the YouTube API finished loading before this script ran, the
+    // onYouTubeIframeAPIReady callback was missed — detect that here.
+    if (window.YT && window.YT.Player) ytApiReady = true;
   }
 
   // ---------------- Player size mode (Default / Theater / Full) ----------------
@@ -157,18 +164,34 @@
       return;
     }
     if (!ytPlayer) {
+      playerReady = false;
+      const vars = {
+        autoplay: 1,
+        rel: 0,
+        mute: 0,
+        playsinline: 1,
+        enablejsapi: 1
+      };
+      // YouTube checks the embedding origin. Passing it explicitly avoids
+      // "Error 153 / video player configuration error" on hosted sites.
+      if (/^https?:/i.test(window.location.origin)) vars.origin = window.location.origin;
+
       ytPlayer = new YT.Player("player", {
         videoId,
         // Try unmuted autoplay first. If the browser blocks it (no user
         // gesture on this page yet), checkAutoplayBlocked() below falls
         // back to muted playback automatically so the party never stalls.
-        playerVars: { autoplay: 1, rel: 0, mute: 0 },
+        playerVars: vars,
         events: {
           onReady: onPlayerReady,
           onStateChange: onPlayerStateChange,
           onError: onPlayerError
         }
       });
+    } else if (!playerReady) {
+      // Player object exists but isn't ready yet (calling loadVideoById now
+      // would throw) — remember the song and load it from onPlayerReady.
+      pendingLoadId = videoId;
     } else {
       ytPlayer.loadVideoById(videoId);
       ytPlayer.playVideo();
@@ -176,12 +199,18 @@
   }
 
   function onPlayerReady(event) {
+    playerReady = true;
     event.target.setVolume(volumeLevel);
+    if (pendingLoadId) {
+      const id = pendingLoadId;
+      pendingLoadId = null;
+      event.target.loadVideoById(id);
+    }
     event.target.playVideo();
     // Give the browser a moment, then check whether unmuted autoplay
     // actually took — if blocked, fall back to muted + show the mute
     // button so the host can turn sound on with one tap.
-    setTimeout(checkAutoplayBlocked, 1200);
+    setTimeout(checkAutoplayBlocked, 1500);
   }
 
   function checkAutoplayBlocked() {
@@ -264,17 +293,33 @@
     }
   }
 
-  // Error codes 101 / 150 = embedding disabled by the video owner.
-  // 100 = video removed/private. 2 = invalid video id.
+  // 2   = invalid video id
+  // 5   = HTML5 player problem
+  // 100 = video removed / private
+  // 101, 150, 152 = owner disabled embedding (or blocked in this country)
+  // 153 = player config error: page has no valid origin/referrer
+  //       (opened from file://, or a Referrer-Policy of no-referrer)
   function onPlayerError(event) {
+    const code = event.data;
+    console.warn("[KaraokeHub] YouTube player error", code, "videoId:", currentLoadedVideoId);
     if (currentRole !== "host") return;
+
+    // 153 is a SITE problem, not a VIDEO problem — skipping would just
+    // burn through the whole queue, so stop and explain instead.
+    if (code === 153) {
+      showToast("Player error 153: open the site via https:// (not a file) and make sure it sends a referrer. Not skipping.", 9000);
+      return;
+    }
+
     const messages = {
       2: "That video link was invalid — skipping.",
+      5: "The video player hit an error — skipping.",
       100: "That video was removed or is private — skipping.",
       101: "That video can't be played outside YouTube — skipping.",
-      150: "That video can't be played outside YouTube — skipping."
+      150: "That video can't be played outside YouTube — skipping.",
+      152: "That video can't be played outside YouTube — skipping."
     };
-    showToast(messages[event.data] || "That video couldn't play — skipping.", 4000);
+    showToast((messages[code] || "That video couldn't play (error " + code + ") — skipping."), 4000);
     advanceQueue();
   }
 
@@ -403,6 +448,19 @@
   }
 
   async function advanceQueue() {
+    if (advancing) return;
+    advancing = true;
+    try {
+      await doAdvanceQueue();
+    } catch (err) {
+      console.error("[KaraokeHub] advanceQueue failed:", err);
+      showToast("Couldn't load the next song — try Next again.", 4000);
+    } finally {
+      advancing = false;
+    }
+  }
+
+  async function doAdvanceQueue() {
     if (!currentRoomRef) return;
     const snap = await currentRoomRef.once("value");
     const room = snap.val();
@@ -636,8 +694,8 @@
     try {
       const url =
         "https://www.googleapis.com/youtube/v3/search" +
-        "?part=snippet&type=video&maxResults=10&videoCategoryId=10" +
-        "&videoEmbeddable=true" +
+        "?part=snippet&type=video&maxResults=15&videoCategoryId=10" +
+        "&videoEmbeddable=true&videoSyndicated=true" +
         "&q=" + encodeURIComponent(query + " karaoke") +
         "&key=" + CFG.youtubeApiKey;
 
@@ -651,10 +709,43 @@
       }
 
       statusEl.hidden = true;
-      renderSearchResults(data.items || []);
+      renderSearchResults(await filterPlayable(data.items || []));
     } catch (err) {
       statusEl.textContent = "Search failed. Check your connection or API key.";
       statusEl.hidden = false;
+    }
+  }
+
+  // The search endpoint's videoEmbeddable flag isn't perfect. Double-check
+  // each result with videos.list and drop anything that won't play in our
+  // embedded player (not embeddable, not public, or age-restricted).
+  async function filterPlayable(items) {
+    const ids = items.map((i) => i.id && i.id.videoId).filter(Boolean);
+    if (ids.length === 0) return [];
+    try {
+      const url =
+        "https://www.googleapis.com/youtube/v3/videos" +
+        "?part=status,contentDetails&id=" + ids.join(",") +
+        "&key=" + CFG.youtubeApiKey;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.error || !data.items) return items; // fail open
+      const playable = new Set(
+        data.items
+          .filter((v) => {
+            const st = v.status || {};
+            const rating = (v.contentDetails || {}).contentRating || {};
+            return (
+              st.embeddable === true &&
+              st.privacyStatus === "public" &&
+              rating.ytRating !== "ytAgeRestricted"
+            );
+          })
+          .map((v) => v.id)
+      );
+      return items.filter((i) => playable.has(i.id.videoId));
+    } catch (err) {
+      return items; // fail open
     }
   }
 
